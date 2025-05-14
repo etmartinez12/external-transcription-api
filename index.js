@@ -10,7 +10,7 @@ import { chromium } from "playwright";
 // import { chromium } from 'playwright-extra';
 // import StealthPlugin from 'playwright-extra-plugin-stealth';
 
-chromium.use(StealthPlugin());
+// chromium.use(StealthPlugin());
 
 const execAsync = promisify(exec);
 const unlinkAsync = promisify(fs.unlink);
