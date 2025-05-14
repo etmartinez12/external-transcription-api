@@ -5,9 +5,10 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import fs from 'fs';
 import OpenAI from 'openai';
-import { chromium } from 'playwright';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'playwright-extra-plugin-stealth';
+
+chromium.use(StealthPlugin());
 
 const execAsync = promisify(exec);
 const unlinkAsync = promisify(fs.unlink);
@@ -19,7 +20,6 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Clean visible page text
 function cleanPageContent(content) {
   return content
     .split('\n')
@@ -35,12 +35,9 @@ function cleanPageContent(content) {
     .join('\n');
 }
 
-// Scrape TikTok caption and screen text
-chromium.use(StealthPlugin());
-
 async function extractTikTokContentWithPlaywright(url) {
   const browser = await chromium.launch({
-    headless: false, // change to true in production
+    headless: true,
     args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
   });
 
@@ -51,23 +48,36 @@ async function extractTikTokContentWithPlaywright(url) {
   });
 
   const page = await context.newPage();
-  try {
-    await page.goto(url, { waitUntil: 'networkidle' });
 
-    await page.waitForTimeout(5000); // give time for JS to run
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(6000); // Let JS load
 
     const description = await page.evaluate(() => {
-      const el = document.querySelector('[data-e2e="browse-video-desc"]') || document.querySelector('h1');
-      return el?.textContent?.trim() || '';
+      const selectors = [
+        '[data-e2e="browse-video-desc"]',
+        'h1',
+        'article > div > div > span',
+      ];
+      for (const selector of selectors) {
+        const el = document.querySelector(selector);
+        if (el?.textContent?.trim()) return el.textContent.trim();
+      }
+
+      const fallback = Array.from(document.querySelectorAll('span'))
+        .map((el) => el.textContent?.trim())
+        .find((t) => t && t.length > 50);
+
+      return fallback || '';
     });
 
-    const fullText = await page.evaluate(() => document.body.innerText);
+    const bodyText = await page.evaluate(() => document.body.innerText);
     return {
       description: description || 'N/A',
-      cleanedContent: cleanPageContent(fullText || ''),
+      cleanedContent: cleanPageContent(bodyText || ''),
     };
   } catch (err) {
-    console.error('Playwright error:', err);
+    console.error('❌ Playwright error:', err);
     return {
       description: 'N/A',
       cleanedContent: 'N/A',
@@ -77,7 +87,6 @@ async function extractTikTokContentWithPlaywright(url) {
   }
 }
 
-// Audio download (yt-dlp)
 async function downloadAudio(url) {
   const outputBase = join(tmpdir(), `audio-${Date.now()}`);
   const outputPath = `${outputBase}.mp3`;
@@ -93,7 +102,6 @@ async function downloadAudio(url) {
   }
 }
 
-// Whisper transcription
 async function transcribeAudio(audioPath) {
   if (!audioPath) return 'N/A';
 
@@ -118,26 +126,24 @@ async function transcribeAudio(audioPath) {
   }
 }
 
-// Main route
 app.post('/transcribe', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'Missing video URL' });
 
   let transcript = 'N/A';
-
   try {
     const audioPath = await downloadAudio(url);
     transcript = await transcribeAudio(audioPath);
-  } catch (error) {
-    console.warn('Skipping transcription due to download error.');
+  } catch {
+    console.warn('Skipping transcript step.');
   }
 
   try {
-    const { description, cleanedContent } = await extractTikTokContentWithPlaywright(url);
+    const { description, cleanedContent } =
+      await extractTikTokContentWithPlaywright(url);
+
     const title =
-      description !== 'N/A'
-        ? description.slice(0, 50)
-        : 'Unknown Recipe';
+      description !== 'N/A' ? description.slice(0, 50) : 'Unknown Recipe';
 
     return res.json({
       success: true,
@@ -153,6 +159,6 @@ app.post('/transcribe', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`yt-dlp + Whisper transcription API listening on port ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`✅ Server running on port ${PORT}`)
+);
