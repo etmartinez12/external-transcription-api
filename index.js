@@ -5,8 +5,10 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import fs from 'fs';
 import OpenAI from 'openai';
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'playwright-extra-plugin-stealth';
+import { chromium } from "playwright";
+
+// import { chromium } from 'playwright-extra';
+// import StealthPlugin from 'playwright-extra-plugin-stealth';
 
 chromium.use(StealthPlugin());
 
