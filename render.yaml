@@ -3,8 +3,13 @@ services:
     name: transcription-api
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: |
+      apt-get update
+      apt-get install -y ffmpeg curl
+      curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+      chmod a+rx /usr/local/bin/yt-dlp
+      npm install
     startCommand: node index.js
     envVars:
       - key: OPENAI_API_KEY
-        sync: false
+        sync: false  # or set value: your-key-here if not syncing from dashboard
