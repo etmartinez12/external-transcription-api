@@ -1,13 +1,15 @@
 {
   "name": "external-transcription-api",
-  "type": "module",
   "version": "1.0.0",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "openai": "^4.17.1"
+    "node-fetch": "^3.3.2",
+    "openai": "^4.0.0",
+    "playwright": "^1.43.0"  // ✅ <-- Add this line
   }
 }
