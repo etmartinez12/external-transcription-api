@@ -15,7 +15,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.use(express.json());
 
-// Step 1: Resolve TikTok short URL
+/**
+ * Step 1: Resolve short TikTok URLs (e.g., https://tiktok.com/t/...)
+ */
 async function resolveTikTokRedirect(shortUrl) {
   try {
     const res = await fetch(shortUrl, {
@@ -26,14 +28,19 @@ async function resolveTikTokRedirect(shortUrl) {
       },
     });
     const location = res.headers.get("location");
-    return location || shortUrl;
+    if (location && location.includes("tiktok.com")) {
+      return location;
+    }
+    return shortUrl;
   } catch (err) {
     console.error("Redirect resolution failed:", err);
     return shortUrl;
   }
 }
 
-// Step 2: Scrape TikTok description and visible text
+/**
+ * Step 2: Scrape TikTok description and visible text
+ */
 async function scrapeTikTokMetadata(url) {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
@@ -66,17 +73,22 @@ async function scrapeTikTokMetadata(url) {
   }
 }
 
-// Step 3: Transcription endpoint
+/**
+ * Step 3: POST /transcribe
+ * Transcribes audio from video and scrapes TikTok caption data
+ */
 app.post('/transcribe', async (req, res) => {
   let { url } = req.body;
   if (!url) return res.status(400).json({ error: 'Missing video URL' });
 
-  const resolvedUrl = await resolveTikTokRedirect(url);
+  // ✅ Resolve short TikTok links before processing
+  url = await resolveTikTokRedirect(url);
+
   const audioBase = join(tmpdir(), `audio-${Date.now()}`);
   const outputPath = `${audioBase}.mp3`;
 
   try {
-    await execAsync(`yt-dlp -x --audio-format mp3 "${resolvedUrl}" -o "${audioBase}.%(ext)s"`);
+    await execAsync(`yt-dlp -x --audio-format mp3 "${url}" -o "${audioBase}.%(ext)s"`);
 
     const transcriptResponse = await openai.audio.transcriptions.create({
       file: fs.createReadStream(outputPath),
@@ -85,7 +97,7 @@ app.post('/transcribe', async (req, res) => {
       response_format: 'json',
     });
 
-    const { description, title, pageContent } = await scrapeTikTokMetadata(resolvedUrl);
+    const { description, title, pageContent } = await scrapeTikTokMetadata(url);
 
     await unlinkAsync(outputPath);
 
@@ -96,8 +108,11 @@ app.post('/transcribe', async (req, res) => {
       pageContent,
     });
   } catch (error) {
-    console.error("Transcription error:", error);
-    return res.status(500).json({ error: 'Failed to process video' });
+    console.error("❌ Full transcription pipeline error:", error);
+    return res.status(500).json({
+      error: 'Failed to process video',
+      details: error.message || error.toString(),
+    });
   }
 });
 
