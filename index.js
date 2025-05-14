@@ -6,6 +6,8 @@ import { join } from 'path';
 import fs from 'fs';
 import OpenAI from 'openai';
 import { chromium } from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'playwright-extra-plugin-stealth';
 
 const execAsync = promisify(exec);
 const unlinkAsync = promisify(fs.unlink);
@@ -34,47 +36,38 @@ function cleanPageContent(content) {
 }
 
 // Scrape TikTok caption and screen text
+chromium.use(StealthPlugin());
+
 async function extractTikTokContentWithPlaywright(url) {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: false, // change to true in production
+    args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
+  });
+
   const context = await browser.newContext({
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
   });
-  const page = await context.newPage();
 
+  const page = await context.newPage();
   try {
     await page.goto(url, { waitUntil: 'networkidle' });
 
-    const rawHtml = await page.content();
-    const fullText = await page.evaluate(() => document.body.innerText);
-    console.log('🔍 Raw HTML snippet:', rawHtml.slice(0, 1000));
-    console.log('🔍 Visible body text snippet:', fullText.slice(0, 300));
+    await page.waitForTimeout(5000); // give time for JS to run
 
     const description = await page.evaluate(() => {
-      const selectors = [
-        'div[data-e2e="browse-video-desc"]',
-        'span[data-e2e="browse-video-desc"]',
-        'h1',
-      ];
-      for (const selector of selectors) {
-        const el = document.querySelector(selector);
-        if (el?.textContent?.trim()) return el.textContent.trim();
-      }
-
-      const fallback = Array.from(document.querySelectorAll('span'))
-        .map((el) => el.textContent?.trim())
-        .find((t) => t && t.length > 50);
-
-      return fallback || '';
+      const el = document.querySelector('[data-e2e="browse-video-desc"]') || document.querySelector('h1');
+      return el?.textContent?.trim() || '';
     });
 
+    const fullText = await page.evaluate(() => document.body.innerText);
     return {
       description: description || 'N/A',
       cleanedContent: cleanPageContent(fullText || ''),
     };
   } catch (err) {
-    console.error('❌ Playwright TikTok extraction error:', err);
+    console.error('Playwright error:', err);
     return {
       description: 'N/A',
       cleanedContent: 'N/A',
