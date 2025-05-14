@@ -4,117 +4,49 @@ import { promisify } from 'util';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import fs from 'fs';
+import multer from 'multer';
 import OpenAI from 'openai';
-import { chromium } from 'playwright';
-import fetch from 'node-fetch';
 
 const execAsync = promisify(exec);
 const unlinkAsync = promisify(fs.unlink);
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
 app.use(express.json());
 
-/**
- * Step 1: Resolve short TikTok URLs (e.g., https://tiktok.com/t/...)
- */
-async function resolveTikTokRedirect(shortUrl) {
-  try {
-    const res = await fetch(shortUrl, {
-      method: "GET",
-      redirect: "manual",
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-      },
-    });
-    const location = res.headers.get("location");
-    if (location && location.includes("tiktok.com")) {
-      return location;
-    }
-    return shortUrl;
-  } catch (err) {
-    console.error("Redirect resolution failed:", err);
-    return shortUrl;
-  }
-}
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-/**
- * Step 2: Scrape TikTok description and visible text
- */
-async function scrapeTikTokMetadata(url) {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-
-  try {
-    await page.goto(url, { waitUntil: 'networkidle' });
-
-    const description = await page.evaluate(() => {
-      const el = document.querySelector('div[data-e2e="browse-video-desc"], span[data-e2e="browse-video-desc"]');
-      return el?.textContent?.trim() || "";
-    });
-
-    const title = await page.title();
-    const visibleText = await page.evaluate(() => document.body.innerText);
-
-    return {
-      description,
-      title,
-      pageContent: visibleText?.slice(0, 5000) || "",
-    };
-  } catch (err) {
-    console.error("Scraping error:", err);
-    return {
-      description: "N/A",
-      title: "N/A",
-      pageContent: "N/A",
-    };
-  } finally {
-    await browser.close();
-  }
-}
-
-/**
- * Step 3: POST /transcribe
- * Transcribes audio from video and scrapes TikTok caption data
- */
 app.post('/transcribe', async (req, res) => {
-  let { url } = req.body;
+  const { url } = req.body;
+
   if (!url) return res.status(400).json({ error: 'Missing video URL' });
 
-  // ✅ Resolve short TikTok links before processing
-  url = await resolveTikTokRedirect(url);
-
-  const audioBase = join(tmpdir(), `audio-${Date.now()}`);
-  const outputPath = `${audioBase}.mp3`;
+  const fileBase = join(tmpdir(), `audio-${Date.now()}`);
+  const outputPath = `${fileBase}.mp3`;
 
   try {
-    await execAsync(`yt-dlp -x --audio-format mp3 "${url}" -o "${audioBase}.%(ext)s"`);
+    // Download the audio from the video
+    await execAsync(`yt-dlp -x --audio-format mp3 "${url}" -o "${fileBase}.%(ext)s"`);
 
-    const transcriptResponse = await openai.audio.transcriptions.create({
+    // Transcribe using OpenAI Whisper
+    const response = await openai.audio.transcriptions.create({
       file: fs.createReadStream(outputPath),
       model: 'whisper-1',
       language: 'en',
       response_format: 'json',
     });
 
-    const { description, title, pageContent } = await scrapeTikTokMetadata(url);
-
     await unlinkAsync(outputPath);
 
-    return res.json({
-      transcript: transcriptResponse.text,
-      description,
-      title,
-      pageContent,
-    });
+    return res.json({ transcript: response.text });
   } catch (error) {
-    console.error("❌ Full transcription pipeline error:", error);
-    return res.status(500).json({
-      error: 'Failed to process video',
-      details: error.message || error.toString(),
-    });
+    console.error('Transcription error:', error);
+    return res.status(500).json({ error: 'Failed to transcribe audio' });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Transcription API running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`yt-dlp transcription service running on port ${PORT}`);
+});
